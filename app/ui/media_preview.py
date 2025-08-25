@@ -14,13 +14,13 @@ from core.styles import theme
 
 class ContainedVideoWidget(QVideoWidget):
     """Video widget that respects container bounds."""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_NoSystemBackground)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_OpaquePaintEvent, False)
-    
+
     def resizeEvent(self, event):
         """Override resize to ensure we stay within bounds."""
         super().resizeEvent(event)
@@ -39,19 +39,19 @@ class ContainedVideoWidget(QVideoWidget):
 
 class VideoContainer(QWidget):
     """Container widget that properly clips video content."""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("media_preview")
         self.video_widget = None
-        
+
     def setVideoWidget(self, video_widget):
         """Set the video widget and position it properly."""
         self.video_widget = video_widget
         if self.video_widget:
             self.video_widget.setParent(self)
             self.updateVideoPosition()
-    
+
     def updateVideoPosition(self):
         """Update video widget position to stay within bounds."""
         if self.video_widget:
@@ -60,26 +60,40 @@ class VideoContainer(QWidget):
             margin = 4
             available_width = self.width() - (2 * border_width) - (2 * margin)
             available_height = self.height() - (2 * border_width) - (2 * margin)
-            
+
             # Center the video widget within available space
-            x = border_width + margin + (available_width - self.video_widget.width()) // 2
-            y = border_width + margin + (available_height - self.video_widget.height()) // 2
-            
+            x = (
+                border_width
+                + margin
+                + (available_width - self.video_widget.width()) // 2
+            )
+            y = (
+                border_width
+                + margin
+                + (available_height - self.video_widget.height()) // 2
+            )
+
             # Ensure video widget doesn't exceed available space
             video_width = min(available_width, self.video_widget.width())
             video_height = min(available_height, self.video_widget.height())
-            
+
             # Ensure x and y are within bounds
-            x = max(border_width + margin, min(x, self.width() - border_width - margin - video_width))
-            y = max(border_width + margin, min(y, self.height() - border_width - margin - video_height))
-            
+            x = max(
+                border_width + margin,
+                min(x, self.width() - border_width - margin - video_width),
+            )
+            y = max(
+                border_width + margin,
+                min(y, self.height() - border_width - margin - video_height),
+            )
+
             self.video_widget.setGeometry(x, y, video_width, video_height)
-    
+
     def resizeEvent(self, event):
         """Handle resize events to reposition video widget."""
         super().resizeEvent(event)
         self.updateVideoPosition()
-    
+
     def paintEvent(self, event):
         """Custom paint event to ensure proper clipping."""
         super().paintEvent(event)
@@ -164,18 +178,20 @@ class MediaPreview(QWidget):
             self.preview = QFrame()
             self.preview.setFixedSize(QSize(thumbnail_width, thumbnail_height))
             self.preview.setObjectName("media_preview")
-            
+
             # Create video widget with proper size
             self.video_widget = QVideoWidget()
-            video_size = min(thumbnail_width - 10, thumbnail_height - 10)  # Leave 5px margin on each side
+            video_size = min(
+                thumbnail_width - 10, thumbnail_height - 10
+            )  # Leave 5px margin on each side
             self.video_widget.setFixedSize(QSize(video_size, video_size))
-            
+
             # Create layout with proper centering
             layout = QVBoxLayout(self.preview)
             layout.setContentsMargins(5, 5, 5, 5)  # 5px margin all around
             layout.setSpacing(0)
             layout.addWidget(self.video_widget, 0, Qt.AlignCenter)  # Center the widget
-            
+
             # Apply the same styling as MP3 to the outer container
             self.preview.setStyleSheet(
                 f"""
@@ -190,7 +206,7 @@ class MediaPreview(QWidget):
                 }}
             """
             )
-            
+
             # Make clickable
             self.preview.mousePressEvent = self._on_preview_clicked
         else:

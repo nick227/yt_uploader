@@ -64,4 +64,49 @@ auth_state.json
 *.pem
 
 # Demo files
+uploads/
+media/
 demo_media/
+
+# Testing and coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.hypothesis/
+
+# Temporary and test files
+test_*.py
+*_test.py
+test_*.spec
+*Test.spec
+*TestConsole.spec
+*TestExe.spec
+*TestExeConsole.spec
+*NoQtTest.spec
+*SimpleTest.spec
+test_*.exe
+*Test.exe
+*TestExe.exe
+*SimpleTest.exe
+*NoQtTest.exe
+
+# Build scripts (keep only the main ones)
+build_*.py
+!build.py
+monitor_*.py
+check_*.py
+analyze_*.py
+
+# Temporary directories
+test_folder/
+folder1/
+folder2/
+uploaded/
+
+# Bandit security reports
+bandit-report.json
+
+# PyInstaller artifacts
+*.spec
+build/
+dist/
