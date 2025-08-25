@@ -154,7 +154,8 @@ class MainWindow(QMainWindow):
 
         self.media_rows: list[MediaRow] = []
         self.hidden_folders: set[str] = set()  # Track hidden folders
-        self._scan_current_folder()
+        # Defer initial scan to avoid blocking startup
+        # self._scan_current_folder()
 
         # Update upload button state based on authentication
         self._update_upload_button_state()
@@ -166,6 +167,9 @@ class MainWindow(QMainWindow):
         # Initialize auth widget after window is shown to avoid blocking
         if self.auth_widget is None:
             self._initialize_auth()
+        
+        # Trigger initial folder scan after window is shown
+        QTimer.singleShot(100, self._scan_current_folder)
 
     def _initialize_auth(self):
         """Initialize authentication components after window is shown."""
