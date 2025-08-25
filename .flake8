@@ -1,0 +1,57 @@
+[flake8]
+# Maximum line length
+max-line-length = 88
+
+# Exclude directories and files
+exclude = 
+    .git,
+    __pycache__,
+    .pytest_cache,
+    .tox,
+    build,
+    dist,
+    htmlcov,
+    *.egg-info,
+    private,
+    demo_media,
+    tests/fixtures
+
+# Ignore specific error codes
+ignore = 
+    # Line length handled by black
+    E203,
+    # Whitespace before ':' handled by black
+    E231,
+    # Line break before binary operator handled by black
+    W503,
+    # Line break after binary operator handled by black
+    W504,
+    # Module level import not at top of file (for conditional imports)
+    E402,
+    # Do not assign a lambda expression, use a def (sometimes lambda is clearer)
+    E731,
+    # Redefined name from outer scope (for test fixtures)
+    F811,
+    # Imported but unused (for __init__.py files)
+    F401,
+    # Module imported but unused (for __init__.py files)
+    F841
+
+# Show source code for each error
+show-source = True
+
+# Show statistics
+statistics = True
+
+# Count errors
+count = True
+
+# Output format
+format = %(path)s:%(row)d:%(col)d: %(code)s %(text)s
+
+# Per-file-ignores
+per-file-ignores =
+    # Ignore unused imports in __init__.py files
+    __init__.py:F401
+    # Ignore line length in generated files
+    */generated/*:E501

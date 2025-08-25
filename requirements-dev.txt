@@ -1,0 +1,36 @@
+# Development and testing dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Testing framework
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+pytest-qt>=4.2.0
+pytest-xdist>=3.0.0
+
+# Code quality and linting
+flake8>=6.0.0
+flake8-docstrings>=1.7.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.0.0
+bandit>=1.7.5
+
+# Documentation
+sphinx>=6.0.0
+sphinx-rtd-theme>=1.2.0
+
+# Development tools
+pre-commit>=3.0.0
+tox>=4.0.0
+
+# Debugging and profiling
+pytest-profiling>=1.7.0
+
+# Mock and test utilities
+responses>=0.23.0
+freezegun>=1.2.0
+factory-boy>=3.2.0
+
+# Include production dependencies
+-r requirements.txt

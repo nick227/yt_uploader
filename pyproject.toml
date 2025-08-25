@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "media-uploader"
+version = "0.1.0"
+description = "A media to YouTube upload helper application"
+authors = [{name = "Media Uploader Team"}]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "PySide6>=6.5.0",
+    "google-auth>=2.17.0",
+    "google-auth-oauthlib>=1.0.0",
+    "google-auth-httplib2>=0.1.0",
+    "google-api-python-client>=2.88.0",
+    "PyJWT>=2.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-qt>=4.2.0",
+    "pytest-xdist>=3.0.0",
+    "flake8>=6.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "tox>=4.0.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | htmlcov
+  | private
+  | demo_media
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+known_first_party = ["app", "core", "services", "infra"]
+known_third_party = ["PySide6", "google", "pytest", "unittest"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+default_section = "THIRDPARTY"
+skip = ["private", "demo_media", "htmlcov", "build", "dist", ".tox", ".pytest_cache"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+# Ignore missing imports for third-party libraries
+[[tool.mypy.overrides]]
+module = [
+    "PySide6.*",
+    "google.*",
+    "googleapiclient.*",
+    "google_auth.*",
+    "google_auth_oauthlib.*",
+    "google_auth_httplib2.*",
+    "pytest.*",
+    "pytest_qt.*",
+    "pytest_mock.*",
+    "pytest_cov.*",
+    "pytest_xdist.*",
+    "unittest.mock",
+    "responses.*",
+    "freezegun.*",
+    "factory_boy.*",
+]
+ignore_missing_imports = true
+
+# Per-module options
+[tool.mypy."app.ui.*"]
+disallow_untyped_defs = false  # Qt widgets often have untyped methods
+
+[tool.mypy."tests.*"]
+disallow_untyped_defs = false  # Test files can be more flexible
