@@ -1,3 +1,10 @@
+"""
+Validation utilities for YouTube upload requirements.
+
+This module provides validation functions for YouTube titles and descriptions
+to ensure they meet YouTube's requirements before upload.
+"""
+
 import re
 from typing import Tuple
 
@@ -17,6 +24,7 @@ def is_nonempty(s: str) -> bool:
 def validate_youtube_title(title: str) -> Tuple[bool, str]:
     """
     Validate YouTube title according to YouTube's requirements.
+
     Returns (is_valid, error_message)
     """
     if not is_nonempty(title):
@@ -51,9 +59,10 @@ def validate_youtube_title(title: str) -> Tuple[bool, str]:
     return True, ""
 
 
-def validate_youtube_description(description: str) -> Tuple[bool, str]:
+def validate_youtube_description(description: str) -> tuple[bool, str]:
     """
     Validate YouTube description according to YouTube's requirements.
+
     Returns (is_valid, error_message)
     """
     if not is_nonempty(description):

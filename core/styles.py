@@ -1,10 +1,11 @@
 """
 Centralized styling system for the Media Uploader application.
+
 Provides consistent spacing, colors, and component styles.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Final
+from typing import Final
 
 # Ultra dark gray/black theme (Professional elegance)
 COLORS = {
@@ -462,7 +463,7 @@ class StyleBuilder:
 
     @staticmethod
     def main_window() -> str:
-        """Main window style with ultra dark theme."""
+        """Apply main window style with ultra dark theme."""
         return f"""
             QMainWindow {{
                 background: {theme.background_primary};

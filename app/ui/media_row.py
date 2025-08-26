@@ -1,36 +1,30 @@
 # app/ui/media_row.py
+import logging
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
-    QFileDialog,
-    QHBoxLayout,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, 
+    QLineEdit, QTextEdit, QCheckBox, QMessageBox, QMenu, QComboBox,
+    QFileDialog, QDialog
 )
 
 from core.animations import fade_in, shake
-
-# Import constants from core config
-from core.config import SUPPORTED_EXTENSIONS
 from core.history_manager import HistoryManager
 from core.models import MediaItem
-from core.styles import LayoutHelper, StyleBuilder, theme
+from core.styles import LayoutHelper, StyleBuilder
+from core.upload_manager import UploadManager
 
-from .media_converter import ConversionError, MediaConverter
+from .media_converter import MediaConverter, ConversionError
 from .media_info_widget import MediaInfoWidget
 from .media_preview import MediaPreview
 from .media_row_updater import MediaRowUpdater
-from .schedule_dialog import ScheduleDialog
 from .upload_status import UploadStatusWidget
+from .schedule_dialog import ScheduleDialog
+
+logger = logging.getLogger(__name__)
 
 
 class MediaRow(QWidget):
@@ -44,13 +38,23 @@ class MediaRow(QWidget):
         self.history_manager = HistoryManager()
         self.upload_request_id = None  # Initialize upload request ID
 
+        # Initialize settings manager access
+        self.settings_manager = getattr(parent, 'settings_manager', None)
+
+        # Initialize media persistence service access
+        self.media_persistence_service = getattr(parent, 'media_persistence_service', None)
+
+        # Flag to prevent saving during loading
+        self._loading_persisted_data = False
+
         # Initialize media preview
-        self.media_preview = MediaPreview(self.path, self)
-        self.player = self.media_preview.get_player()
-        self.preview = self.media_preview.get_preview_widget()
+        self._setup_media_preview()
 
         # Setup UI
         self._setup_ui()
+
+        # Load persisted data (after UI is set up)
+        self._load_persisted_data()
 
         # Set up button text callback
         self.media_preview.set_button_text_callback(self._update_play_button_text)
@@ -170,7 +174,7 @@ class MediaRow(QWidget):
                 self.media_info.upload_status_indicator.setStyleSheet(
                     f"""
                     QLabel {{
-                        color: {theme.text_secondary};
+                        color: {StyleBuilder.theme.text_secondary};
                         font-size: 10px;
                         padding: 2px 6px;
                         border-radius: 4px;
@@ -205,7 +209,7 @@ class MediaRow(QWidget):
                     self.media_info.render_status_indicator.setStyleSheet(
                         f"""
                         QLabel {{
-                            color: {theme.text_secondary};
+                            color: {StyleBuilder.theme.text_secondary};
                             font-size: 10px;
                             padding: 2px 6px;
                             border-radius: 4px;
@@ -218,7 +222,7 @@ class MediaRow(QWidget):
                 self.media_info.render_status_indicator.setText("")
 
         except Exception as e:
-            pass
+            logger.exception(f"Error updating status indicators for {self.media_item.path}: {e}")
 
     def _update_play_button_text(self, text: str):
         """Update the play button text."""
@@ -242,6 +246,11 @@ class MediaRow(QWidget):
             self.image_btn = QPushButton("Add Image")
             self._apply_button_style(self.image_btn, "secondary")
             self.image_btn.clicked.connect(self.on_image_clicked)
+
+            # Add context menu for image management
+            self.image_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.image_btn.customContextMenuRequested.connect(self._show_image_context_menu)
+
             controls.addWidget(self.image_btn)
 
             # Overlay selection dropdown
@@ -305,9 +314,13 @@ class MediaRow(QWidget):
         parent_layout.addWidget(self.upload_status)
 
     def _connect_signals(self):
-        """Connect input signals for validation."""
+        """Connect input signals for validation and persistence."""
         self.title.textChanged.connect(self._validate)
         self.description.textChanged.connect(self._validate)
+
+        # Connect signals for persistence
+        self.title.textChanged.connect(self._save_title_to_persistence)
+        self.description.textChanged.connect(self._save_description_to_persistence)
 
     def _validate(self):
         """Validate the media file and update UI accordingly."""
@@ -401,24 +414,169 @@ class MediaRow(QWidget):
         return self.select_box.isChecked()
 
     def on_image_clicked(self):
-        """Handle image selection for MP3 conversion."""
-        if not self.is_mp3:
-            return
+        """Handle image button click."""
+        # Get starting directory from settings or use current image path
+        start_dir = None
+        try:
+            if self.settings_manager:
+                start_dir = self.settings_manager.get_last_image_path()
+            if not start_dir and self.image_path:
+                start_dir = self.image_path.parent
+        except Exception as e:
+            logger.warning(f"Failed to get last image path: {e}")
 
-        # Open file dialog for image selection
+        if not start_dir:
+            start_dir = Path.cwd()
+
         image_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Image for MP3 Thumbnail",
-            str(self.path.parent),
-            "Image Files (*.jpg *.jpeg *.png *.bmp *.gif);;All Files (*)",
+            self, "Choose Image", str(start_dir), "Images (*.png *.jpg *.jpeg *.gif *.bmp)"
         )
 
         if image_path:
             self.image_path = Path(image_path)
+
+            # Save the image path for next time
+            try:
+                if self.settings_manager:
+                    self.settings_manager.set_last_image_path(self.image_path.parent)
+            except Exception as e:
+                logger.warning(f"Failed to save last image path: {e}")
+
+            # Save image thumbnail to persistence service
+            try:
+                if self.media_persistence_service:
+                    self.media_persistence_service.save_image_thumbnail(self.media_item.path, self.image_path)
+            except Exception as e:
+                logger.warning(f"Failed to save image thumbnail to persistence: {e}")
+
             self.image_btn.setText(f"Image: {self.image_path.name}")
             self._apply_button_style(self.image_btn, "primary")
             self.convert_btn.setEnabled(True)
             self._update_convert_button_text()  # Update button text based on merge state
+
+            # Set the thumbnail background to the selected image
+            self._set_thumbnail_background(self.image_path)
+
+    def _set_thumbnail_background(self, image_path: Path):
+        """Set the MP3 thumbnail background to the selected image."""
+        if not self.is_mp3 or not image_path.exists():
+            return
+
+        try:
+            # Load the image
+            pixmap = QPixmap(str(image_path))
+            if pixmap.isNull():
+                return
+
+            # Scale the image to fit the thumbnail size (120x90)
+            scaled_pixmap = pixmap.scaled(
+                QSize(120, 90),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+
+            # Get the preview widget (QLabel for MP3)
+            preview_widget = self.media_preview.get_preview_widget()
+            if hasattr(preview_widget, 'setPixmap'):
+                # Set the background image
+                preview_widget.setPixmap(scaled_pixmap)
+
+                # Update the styling to show the image properly
+                preview_widget.setStyleSheet(
+                    f"""
+                    QLabel#media_preview {{
+                        border: 3px solid {StyleBuilder.theme.primary};
+                        border-radius: 8px;
+                        background: transparent;
+                        color: {StyleBuilder.theme.text_secondary};
+                        font-size: 12px;
+                        font-weight: 500;
+                        cursor: pointer;
+                        padding: 8px;
+                    }}
+                    QLabel#media_preview:hover {{
+                        border-color: {StyleBuilder.theme.text_primary};
+                        background: rgba(255, 255, 255, 0.1);
+                    }}
+                """
+                )
+
+        except Exception as e:
+            # If setting background fails, just continue without it
+            logger.warning(f"Failed to set thumbnail background: {e}")
+
+    def _clear_thumbnail_background(self):
+        """Clear the MP3 thumbnail background and restore original styling."""
+        if not self.is_mp3:
+            return
+
+        try:
+            # Get the preview widget (QLabel for MP3)
+            preview_widget = self.media_preview.get_preview_widget()
+            if hasattr(preview_widget, 'setPixmap'):
+                # Clear the pixmap
+                preview_widget.setPixmap(QPixmap())
+
+                # Restore original styling
+                preview_widget.setStyleSheet(
+                    f"""
+                    QLabel#media_preview {{
+                        border: 3px solid {StyleBuilder.theme.primary};
+                        border-radius: 8px;
+                        background: {StyleBuilder.theme.background_elevated};
+                        color: {StyleBuilder.theme.text_secondary};
+                        font-size: 12px;
+                        font-weight: 500;
+                        cursor: pointer;
+                        padding: 8px;
+                    }}
+                    QLabel#media_preview:hover {{
+                        border-color: {StyleBuilder.theme.text_primary};
+                        background: {StyleBuilder.theme.background_secondary};
+                    }}
+                """
+                )
+
+        except Exception as e:
+            # If clearing background fails, just continue without it
+            logger.warning(f"Failed to clear thumbnail background: {e}")
+
+    def _show_image_context_menu(self, position):
+        """Show context menu for image management."""
+        if not self.is_mp3:
+            return
+
+        context_menu = QMenu(self)
+
+        # Add "Clear Image" action if an image is set
+        if self.image_path and self.image_path.exists():
+            clear_action = context_menu.addAction("Clear Image")
+            clear_action.triggered.connect(self._clear_image)
+
+        # Add "Change Image" action
+        change_action = context_menu.addAction("Change Image")
+        change_action.triggered.connect(self.on_image_clicked)
+
+        # Show the context menu
+        context_menu.exec(self.image_btn.mapToGlobal(position))
+
+    def _clear_image(self):
+        """Clear the selected image."""
+        self.image_path = None
+        self.image_btn.setText("Add Image")
+        self._apply_button_style(self.image_btn, "secondary")
+        self.convert_btn.setEnabled(False)
+        self._update_convert_button_text()
+
+        # Clear the thumbnail background
+        self._clear_thumbnail_background()
+
+        # Clear image thumbnail from persistence service
+        try:
+            if self.media_persistence_service:
+                self.media_persistence_service.clear_image_thumbnail(self.media_item.path)
+        except Exception as e:
+            logger.warning(f"Failed to clear image thumbnail from persistence: {e}")
 
     def on_convert_clicked(self):
         """Handle MP3 to MP4 conversion with optional merging."""
@@ -550,7 +708,7 @@ class MediaRow(QWidget):
                     break
                 parent = parent.parent()
         except Exception as e:
-            pass
+            logger.warning(f"Failed to find merge MP3 files: {e}")
 
         # If no merge files found, just use current file
         if not mp3_files:
@@ -582,7 +740,7 @@ class MediaRow(QWidget):
                     break
                 parent = parent.parent()
         except Exception as e:
-            pass
+            logger.warning(f"Failed to record conversion in history: {e}")
 
     def _record_upload_in_history(self, video_url: str, video_id: str):
         """Record the upload in the history manager."""
@@ -600,7 +758,7 @@ class MediaRow(QWidget):
                     break
                 parent = parent.parent()
         except Exception as e:
-            pass
+            logger.warning(f"Failed to record upload in history: {e}")
 
     def _add_mp4_row(self, mp4_path: Path):
         """Trigger a rescan to show the new MP4 file."""
@@ -816,3 +974,79 @@ class MediaRow(QWidget):
         except Exception:
             # Silently handle organization errors (upload was still successful)
             pass
+
+    def _setup_media_preview(self):
+        """Initialize the media preview widget."""
+        self.media_preview = MediaPreview(self.path, self)
+        self.player = self.media_preview.get_player()
+        self.preview = self.media_preview.get_preview_widget()
+
+    def _load_persisted_data(self):
+        """Load persisted data (image path, title, description) from persistence service."""
+        if not self.media_persistence_service:
+            logger.warning(f"No persistence service available for {self.media_item.path}")
+            return
+
+        try:
+            # Set flag to prevent saving during loading
+            self._loading_persisted_data = True
+
+            persisted_data = self.media_persistence_service.load_media_row_data(self.media_item.path)
+            if persisted_data:
+                logger.info(f"Loading persisted data for {self.media_item.path}: {persisted_data}")
+
+                # Load image path
+                if 'image_path' in persisted_data:
+                    self.image_path = Path(persisted_data['image_path'])
+                    self.image_btn.setText(f"Image: {self.image_path.name}")
+                    self._apply_button_style(self.image_btn, "primary")
+                    self.convert_btn.setEnabled(True)
+                    self._set_thumbnail_background(self.image_path)
+                    logger.info(f"Loaded image thumbnail: {self.image_path}")
+
+                # Load title
+                if 'title' in persisted_data:
+                    self.title.setText(persisted_data['title'])
+                    logger.info(f"Loaded title: {persisted_data['title']}")
+
+                # Load description
+                if 'description' in persisted_data:
+                    self.description.setPlainText(persisted_data['description'])
+                    logger.info(f"Loaded description: {persisted_data['description']}")
+            else:
+                logger.info(f"No persisted data found for {self.media_item.path}")
+        except Exception as e:
+            logger.warning(f"Failed to load persisted data for {self.media_item.path}: {e}")
+        finally:
+            # Clear flag after loading
+            self._loading_persisted_data = False
+
+    def _save_title_to_persistence(self):
+        """Save the current title to persistence service."""
+        if self._loading_persisted_data:
+            return  # Don't save during loading
+
+        if self.media_persistence_service:
+            try:
+                title_text = self.title.text()
+                self.media_persistence_service.save_title(self.media_item.path, title_text)
+                logger.info(f"Saved title to persistence: {title_text}")
+            except Exception as e:
+                logger.warning(f"Failed to save title to persistence: {e}")
+        else:
+            logger.warning("No persistence service available for saving title")
+
+    def _save_description_to_persistence(self):
+        """Save the current description to persistence service."""
+        if self._loading_persisted_data:
+            return  # Don't save during loading
+
+        if self.media_persistence_service:
+            try:
+                description_text = self.description.toPlainText()
+                self.media_persistence_service.save_description(self.media_item.path, description_text)
+                logger.info(f"Saved description to persistence: {description_text}")
+            except Exception as e:
+                logger.warning(f"Failed to save description to persistence: {e}")
+        else:
+            logger.warning("No persistence service available for saving description")

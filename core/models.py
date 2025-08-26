@@ -1,3 +1,11 @@
+"""
+Core data models for the Media Uploader application.
+
+This module defines the primary data structures used throughout the application,
+including MediaItem for representing media files and UploadProgress for tracking
+upload status.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -5,8 +13,10 @@ from typing import Optional
 from .config import SUPPORTED_EXTENSIONS
 
 
-@dataclass(frozen=True)
+@dataclass
 class MediaItem:
+    """Represents a media file with metadata and properties."""
+
     path: Path
     title: str = ""
     description: str = ""
@@ -14,25 +24,24 @@ class MediaItem:
     size_mb_override: Optional[float] = None  # Allow explicit size override
 
     @property
-    def ext(self) -> str:
+    def extension(self) -> str:
+        """Get the file extension in lowercase."""
         return self.path.suffix.lower()
 
     @property
-    def extension(self) -> str:
-        """Alias for ext property to match test expectations."""
-        return self.ext
-
-    @property
     def is_video(self) -> bool:
-        return self.ext == ".mp4"
+        """Check if this is a video file."""
+        return self.extension == ".mp4"
 
     @property
     def is_audio(self) -> bool:
-        return self.ext == ".mp3"
+        """Check if this is an audio file."""
+        return self.extension == ".mp3"
 
     @property
     def filename(self) -> str:
-        return self.path.name
+        """Get the filename without extension."""
+        return self.path.stem
 
     @property
     def file_size_mb(self) -> float:
@@ -54,6 +63,6 @@ class MediaItem:
         return (
             self.path.exists()
             and self.path.is_file()
-            and self.ext in SUPPORTED_EXTENSIONS
+            and self.extension in SUPPORTED_EXTENSIONS
             and self.size_mb > 0
         )

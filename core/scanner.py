@@ -1,8 +1,13 @@
-import os
-from pathlib import Path
-from typing import List
+"""
+Media file scanner for discovering and validating media files.
+"""
 
-from core.models import MediaItem
+import logging
+from pathlib import Path
+from typing import List, Optional
+
+from .models import MediaItem
+from .config import SUPPORTED_EXTENSIONS
 
 
 def find_media(directory: Path) -> List[MediaItem]:
@@ -26,7 +31,7 @@ def find_media(directory: Path) -> List[MediaItem]:
 
                 media_items.append(media_item)
 
-            except (OSError, PermissionError) as e:
+            except (OSError, PermissionError):
                 continue
 
     return media_items

@@ -28,7 +28,7 @@ class FolderChipBar(QWidget):
         # Main layout
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
 
         # Scroll area for chips
         self.scroll_area = QScrollArea()
@@ -39,14 +39,14 @@ class FolderChipBar(QWidget):
         self.scroll_area.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.scroll_area.setMaximumHeight(32)
-        self.scroll_area.setMinimumHeight(32)
+        self.scroll_area.setMaximumHeight(28)
+        self.scroll_area.setMinimumHeight(28)
 
         # Container widget for chips
         self.chip_container = QWidget()
         self.chip_layout = QHBoxLayout(self.chip_container)
-        self.chip_layout.setContentsMargins(4, 4, 4, 4)
-        self.chip_layout.setSpacing(6)
+        self.chip_layout.setContentsMargins(1, 1, 1, 1)
+        self.chip_layout.setSpacing(12)
         self.chip_layout.addStretch()  # Push chips to the left
 
         self.scroll_area.setWidget(self.chip_container)
@@ -146,8 +146,8 @@ class FolderChipBar(QWidget):
                     background: {theme.primary};
                     color: white;
                     border: 1px solid {theme.primary};
-                    border-radius: 12px;
-                    padding: 4px 8px;
+                    border-radius: 10px;
+                    padding: 2px 6px;
                     font-size: 10px;
                     font-weight: 500;
                     min-width: 20px;
@@ -170,8 +170,8 @@ class FolderChipBar(QWidget):
                     background: {theme.background_elevated};
                     color: {theme.text_secondary};
                     border: 1px solid {theme.border};
-                    border-radius: 12px;
-                    padding: 4px 8px;
+                    border-radius: 10px;
+                    padding: 2px 6px;
                     font-size: 10px;
                     font-weight: 500;
                     min-width: 20px;

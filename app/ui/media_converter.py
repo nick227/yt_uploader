@@ -97,7 +97,11 @@ class MediaConverter:
                 "-i",
                 str(mp3_path),  # Audio input
                 "-filter_complex",
-                f"[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[scaled];[1:a]showwaves=s={config['size']}:mode={config['mode']}:colors={config['color']}:scale={config['scale']}:draw=full,format=yuv420p[waveform];[scaled][waveform]overlay=(W-w)/2:(H-h)/2:shortest=1",
+                f"[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[scaled];[1:a]showwaves=s={
+                    config['size']}:mode={
+                    config['mode']}:colors={
+                    config['color']}:scale={
+                    config['scale']}:draw=full,format=yuv420p[waveform];[scaled][waveform]overlay=(W-w)/2:(H-h)/2:shortest=1",
                 "-c:a",
                 "aac",
                 "-c:v",
@@ -165,7 +169,11 @@ class MediaConverter:
                 "-i",
                 str(mp3_path),  # Audio input
                 "-filter_complex",
-                f"[0:a]showwaves=s={config['size']}:mode={config['mode']}:colors={config['color']}:scale={config['scale']}:draw=full,format=yuv420p",
+                f"[0:a]showwaves=s={
+                    config['size']}:mode={
+                    config['mode']}:colors={
+                    config['color']}:scale={
+                    config['scale']}:draw=full,format=yuv420p",
                 "-c:a",
                 "aac",
                 "-c:v",
@@ -304,7 +312,15 @@ class MediaConverter:
                 "-i",
                 str(mp3_path),  # Audio input
                 "-filter_complex",
-                f"[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,geq=r='if(gt(mod(Y,{int(20/config['density'])}),10),if(gt(mod(X,{int(10/config['density'])}),5),255,0),0)':g='if(gt(mod(Y,{int(20/config['density'])}),10),if(gt(mod(X,{int(10/config['density'])}),5),255,0),0)':b='if(gt(mod(Y,{int(20/config['density'])}),10),if(gt(mod(X,{int(10/config['density'])}),5),255,0),0)':a='if(gt(mod(Y,{int(20/config['density'])}),10),if(gt(mod(X,{int(10/config['density'])}),5),{config['opacity']},0),0)',format=yuva420p",
+                f"[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,geq=r='if(gt(mod(Y,{int(20 /
+                                                                                 config['density'])}),10),if(gt(mod(X,{int(10 /
+                                                                                                                           config['density'])}),5),255,0),0)':g='if(gt(mod(Y,{int(20 /
+                                                                                                                                                                                  config['density'])}),10),if(gt(mod(X,{int(10 /
+                                                                                                                                                                                                                            config['density'])}),5),255,0),0)':b='if(gt(mod(Y,{int(20 /
+                                                                                                                                                                                                                                                                                   config['density'])}),10),if(gt(mod(X,{int(10 /
+                                                                                                                                                                                                                                                                                                                             config['density'])}),5),255,0),0)':a='if(gt(mod(Y,{int(20 /
+                                                                                                                                                                                                                                                                                                                                                                                    config['density'])}),10),if(gt(mod(X,{int(10 /
+                                                                                                                                                                                                                                                                                                                                                                                                                              config['density'])}),5),{config['opacity']},0),0)',format=yuva420p",
                 "-c:a",
                 "aac",
                 "-c:v",
@@ -381,7 +397,11 @@ class MediaConverter:
                 "-i",
                 str(mp3_path),  # Audio input
                 "-filter_complex",
-                f"[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[scaled];[1:a]showwaves=s={config['waveform']['size']}:mode={config['waveform']['mode']}:colors={config['waveform']['color']}:scale={config['waveform']['scale']}:draw=full,format=yuv420p[waveform];[scaled][waveform]overlay=shortest=1",
+                f"[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[scaled];[1:a]showwaves=s={
+                    config['waveform']['size']}:mode={
+                    config['waveform']['mode']}:colors={
+                    config['waveform']['color']}:scale={
+                    config['waveform']['scale']}:draw=full,format=yuv420p[waveform];[scaled][waveform]overlay=shortest=1",
                 "-c:a",
                 "aac",
                 "-c:v",

@@ -1,20 +1,24 @@
 """
 Centralized upload manager that integrates authentication and YouTube uploads.
+
 Simplifies the upload process and provides a clean interface for the UI.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QMutex, QObject, QThread, Signal
 
-from core.auth_manager import AuthError, GoogleAuthManager
-from core.file_organizer import FileOrganizer
-from infra.uploader import UploadWorker
+from .auth_manager import GoogleAuthManager
+from .file_organizer import FileOrganizer
 from services.youtube_service import YouTubeService
+from infra.uploader import UploadWorker
+
+# Note: UploadWorker is imported from infra.uploader when needed
 
 logger = logging.getLogger(__name__)
 

@@ -26,17 +26,17 @@ class LoadingThread(QThread):
         # Quick initial load
         for i in range(1, 30):
             self.progress_updated.emit(i)
-            time.sleep(0.03)
+            time.sleep(0.02)
 
-        # Slower middle section
+        # Faster middle section
         for i in range(30, 80):
             self.progress_updated.emit(i)
-            time.sleep(0.05)
+            time.sleep(0.03)
 
         # Final stretch
         for i in range(80, 101):
             self.progress_updated.emit(i)
-            time.sleep(0.02)
+            time.sleep(0.01)
 
 
 class SplashScreen(QSplashScreen):

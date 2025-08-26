@@ -19,18 +19,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# Lazy imports for better performance
 from core.config import WINDOW_MIN_SIZE, WINDOW_TITLE
-from core.history_manager import HistoryManager
 from core.models import MediaItem
-from core.scanner import find_media
-from core.styles import LayoutHelper, StyleBuilder, theme
-from core.upload_manager import UploadManager
-
 from .auth_widget import AuthWidget
 from .folder_chip_bar import FolderChipBar
-from .history_widget import HistoryWidget
 from .media_row import MediaRow
 from .upload_summary import UploadSummaryWidget
+from core.upload_manager import UploadManager
 
 
 class MainWindow(QMainWindow):
@@ -39,7 +35,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumSize(*WINDOW_MIN_SIZE)
 
-        # Apply dark theme to main window
+        # Lazy load heavy modules
+        from core.styles import StyleBuilder
+
         self.setStyleSheet(StyleBuilder.main_window())
 
         # Central widget
@@ -48,34 +46,71 @@ class MainWindow(QMainWindow):
 
         # Main layout
         layout = QVBoxLayout(central)
+        from core.styles import LayoutHelper
+
         LayoutHelper.set_standard_spacing(layout)
+        layout.setSpacing(4)  # Reduce spacing between sections
 
         # Initialize managers (defer auth setup to avoid blocking)
         self.auth_widget = None  # Will be initialized after window shows
         self.upload_manager = None  # Will be initialized after auth
+        from core.history_manager import HistoryManager
+
         self.history_manager = HistoryManager()
+
+        # Initialize settings manager
+        from core.settings_manager import SettingsManager
+        try:
+            self.settings_manager = SettingsManager()
+        except Exception as e:
+            # If settings manager fails to initialize, create a minimal one
+            print(f"Warning: Failed to initialize settings manager: {e}")
+            self.settings_manager = None
+
+        # Initialize media persistence service
+        from core.media_persistence_service import MediaPersistenceService
+        try:
+            self.media_persistence_service = MediaPersistenceService()
+
+            # Perform initial cleanup of invalid paths
+            if self.media_persistence_service:
+                cleaned_count = self.media_persistence_service.cleanup_invalid_paths()
+                if cleaned_count > 0:
+                    print(f"🧹 Initial cleanup: Removed {cleaned_count} invalid paths")
+
+        except Exception as e:
+            # If persistence service fails to initialize, create a minimal one
+            print(f"Warning: Failed to initialize media persistence service: {e}")
+            self.media_persistence_service = None
 
         # Initialize sorting state
         self.current_sort_field = "name"
         self.current_sort_reverse = False
 
-        # Toolbar area with proper padding
-        toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(12, 8, 12, 8)  # Align with scroll area padding
+        # Top toolbar with fixed height
+        toolbar_container = QWidget()
+        toolbar_container.setFixedHeight(40)  # Fixed height for toolbar
+        toolbar_container.setStyleSheet("QWidget { background: transparent; }")
+
+        toolbar = QHBoxLayout(toolbar_container)
+        toolbar.setContentsMargins(12, 2, 12, 2)  # Very compact margins
+        toolbar.setSpacing(8)  # Reduce spacing between elements
 
         # Combined folder button and path display
         self.folder_btn = QPushButton()
+        from core.styles import theme
+
         self.folder_btn.setStyleSheet(
             f"""
             QPushButton {{
-                padding: 6px 16px;
+                padding: 4px 12px;
                 background: {theme.background_elevated};
                 color: {theme.text_primary};
                 border: 1px solid {theme.border};
-                border-radius: 8px;
+                border-radius: 6px;
                 font-size: 10px;
                 font-weight: 500;
-                min-height: 20px;
+                min-height: 16px;
                 min-width: 50px;
                 text-align: left;
             }}
@@ -88,8 +123,17 @@ class MainWindow(QMainWindow):
             }}
         """
         )
-        # Initialize with current directory
-        self.current_folder = Path.cwd()
+        # Initialize with current directory or last used path
+        try:
+            last_media_path = self.settings_manager.get_last_media_path() if self.settings_manager else None
+            if last_media_path:
+                self.current_folder = last_media_path
+            else:
+                self.current_folder = Path.cwd()
+        except Exception as e:
+            # If there's any error, fall back to current directory
+            print(f"Warning: Failed to load last media path: {e}")
+            self.current_folder = Path.cwd()
 
         self.folder_btn.clicked.connect(self._choose_folder)
         self._update_folder_button_text()
@@ -97,6 +141,8 @@ class MainWindow(QMainWindow):
 
         # History button
         self.history_btn = QPushButton("📋 History")
+        from core.styles import StyleBuilder
+
         self.history_btn.setStyleSheet(StyleBuilder.button_secondary())
         self.history_btn.clicked.connect(self._show_history)
         toolbar.addWidget(self.history_btn)
@@ -108,32 +154,36 @@ class MainWindow(QMainWindow):
         self.batch_upload_btn.setEnabled(False)
         toolbar.addWidget(self.batch_upload_btn)
 
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_container)
 
-        # Sorting controls
+        # Sorting controls (now includes folder chips in two-column layout)
         self._setup_sorting_ui(layout)
 
-        # Folder chip bar for filtering
-        self.folder_chip_bar = FolderChipBar()
-        self.folder_chip_bar.folder_toggled.connect(self._on_folder_toggled)
-        layout.addWidget(self.folder_chip_bar)
+        # Status label for user feedback with fixed height
+        status_container = QWidget()
+        status_container.setFixedHeight(40)  # Fixed height for status
+        status_container.setStyleSheet("QWidget { background: transparent; }")
 
-        # Status label for user feedback
+        status_layout = QHBoxLayout(status_container)
+        status_layout.setContentsMargins(20, 0, 20, 0)  # Left padding for alignment
+
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(
             f"""
             QLabel {{
                 color: {theme.text_secondary};
                 font-size: 11px;
-                padding: 4px 0px 0px 20px;
                 margin: 0px;
             }}
         """
         )
-        layout.addWidget(self.status_label)
+        status_layout.addWidget(self.status_label)
+        layout.addWidget(status_container)
 
-        # Upload summary widget
+        # Upload summary widget with fixed height
         self.upload_summary = UploadSummaryWidget(self)
+        self.upload_summary.setFixedHeight(0)  # Start with zero height
+        self.upload_summary.setVisible(False)  # Initially hidden
         layout.addWidget(self.upload_summary)
 
         # Media list area with enhanced styling
@@ -167,7 +217,7 @@ class MainWindow(QMainWindow):
         # Initialize auth widget after window is shown to avoid blocking
         if self.auth_widget is None:
             self._initialize_auth()
-        
+
         # Trigger initial folder scan after window is shown
         QTimer.singleShot(100, self._scan_current_folder)
 
@@ -258,6 +308,12 @@ class MainWindow(QMainWindow):
         )
         if folder:
             self.current_folder = Path(folder)
+            # Save the selected path for next time
+            try:
+                if self.settings_manager:
+                    self.settings_manager.set_last_media_path(self.current_folder)
+            except Exception as e:
+                print(f"Warning: Failed to save last media path: {e}")
             self._update_folder_button_text()
             self._scan_folder(self.current_folder)
 
@@ -275,7 +331,7 @@ class MainWindow(QMainWindow):
                 truncated = "..." + "\\" + "\\".join(parts[-2:])
             else:
                 # Just truncate from the beginning
-                truncated = "..." + path_str[-(max_length - 3) :]
+                truncated = "..." + path_str[-(max_length - 3):]
             path_str = truncated
 
         self.folder_btn.setText(f"📁 {path_str}")
@@ -309,9 +365,11 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
 
             # Create media rows in batches for better responsiveness
+            from .media_row import MediaRow
+
             batch_size = 5
             for i in range(0, len(media_items), batch_size):
-                batch = media_items[i : i + batch_size]
+                batch = media_items[i: i + batch_size]
 
                 for item in batch:
                     row = MediaRow(item, self)
@@ -383,11 +441,8 @@ class MainWindow(QMainWindow):
 
             processed_files += 1
 
-            # Update progress every 10 files or 20% progress
-            if (
-                processed_files % 10 == 0
-                or processed_files % max(1, total_files // 5) == 0
-            ):
+            # Update progress less frequently for better performance
+            if processed_files % 20 == 0 or processed_files == total_files:
                 progress = min(100, int(processed_files / total_files * 100))
                 self.status_label.setText(
                     f"Scanning... {progress}% ({processed_files}/{total_files} media files)"
@@ -417,11 +472,23 @@ class MainWindow(QMainWindow):
             self.batch_upload_btn.setText("🚀 Upload Selected")
 
     def _setup_sorting_ui(self, parent_layout: QVBoxLayout):
-        """Setup the sorting controls UI."""
-        # Create a compact horizontal layout for sorting controls
+        """Setup the sorting controls UI with two-column layout."""
+        from core.styles import theme
+
+        # Create a container widget with fixed height for the sorting row
+        sort_row_container = QWidget()
+        sort_row_container.setFixedHeight(36)  # Fixed height for sorting row
+        sort_row_container.setStyleSheet("QWidget { background: transparent; }")
+
+        # Create a horizontal layout for the two-column structure
+        sort_row_layout = QHBoxLayout(sort_row_container)
+        sort_row_layout.setContentsMargins(12, 2, 12, 2)  # Very compact margins
+        sort_row_layout.setSpacing(12)  # Space between left and right columns
+
+        # LEFT COLUMN: Sorting controls
         sort_layout = QHBoxLayout()
-        sort_layout.setContentsMargins(12, 4, 12, 4)  # Compact margins
-        sort_layout.setSpacing(8)
+        sort_layout.setContentsMargins(0, 0, 0, 0)  # No margins for nested layout
+        sort_layout.setSpacing(6)  # Reduce spacing between controls
 
         # Sort label
         sort_label = QLabel("Sort by:")
@@ -431,7 +498,7 @@ class MainWindow(QMainWindow):
                 color: {theme.text_secondary};
                 font-size: 10px;
                 font-weight: 500;
-                padding: 4px 0px;
+                padding: 2px 0px;
             }}
         """
         )
@@ -446,11 +513,11 @@ class MainWindow(QMainWindow):
         self.sort_field_combo.setStyleSheet(
             f"""
             QComboBox {{
-                padding: 4px 8px;
+                padding: 2px 6px;
                 background: {theme.background_elevated};
                 color: {theme.text_primary};
                 border: 1px solid {theme.border};
-                border-radius: 6px;
+                border-radius: 4px;
                 font-size: 10px;
                 min-width: 80px;
                 max-width: 120px;
@@ -482,15 +549,15 @@ class MainWindow(QMainWindow):
         self.sort_direction_btn.setStyleSheet(
             f"""
             QPushButton {{
-                padding: 4px 8px;
+                padding: 2px 6px;
                 background: {theme.background_elevated};
                 color: {theme.text_primary};
                 border: 1px solid {theme.border};
-                border-radius: 6px;
+                border-radius: 4px;
                 font-size: 10px;
                 font-weight: bold;
-                min-width: 24px;
-                max-width: 24px;
+                min-width: 20px;
+                max-width: 20px;
             }}
             QPushButton:hover {{
                 border-color: {theme.primary};
@@ -507,18 +574,17 @@ class MainWindow(QMainWindow):
         self.clear_sort_btn.setStyleSheet(
             f"""
             QPushButton {{
-                padding: 4px 8px;
+                padding: 2px 6px;
                 background: {theme.background_elevated};
                 color: {theme.text_secondary};
                 border: 1px solid {theme.border};
-                border-radius: 6px;
+                border-radius: 4px;
                 font-size: 10px;
-                min-width: 50px;
+                min-width: 40px;
             }}
             QPushButton:hover {{
                 border-color: {theme.primary};
                 background: {theme.background_secondary};
-                color: {theme.text_primary};
             }}
         """
         )
@@ -552,8 +618,19 @@ class MainWindow(QMainWindow):
         self.reload_btn.clicked.connect(self._reload_current_folder)
         sort_layout.addWidget(self.reload_btn)
 
-        sort_layout.addStretch()
-        parent_layout.addLayout(sort_layout)
+        # Add left column to main row layout
+        sort_row_layout.addLayout(sort_layout)
+
+        # RIGHT COLUMN: Folder chips
+        # Create folder chip bar for filtering
+        from .folder_chip_bar import FolderChipBar
+
+        self.folder_chip_bar = FolderChipBar()
+        self.folder_chip_bar.folder_toggled.connect(self._on_folder_toggled)
+        sort_row_layout.addWidget(self.folder_chip_bar, 1)  # Take remaining space
+
+        # Add the two-column row to parent layout
+        parent_layout.addWidget(sort_row_container)
 
     def _on_sort_field_changed(self, field: str):
         """Handle sort field change."""
@@ -668,12 +745,16 @@ class MainWindow(QMainWindow):
         dialog.resize(600, 500)
 
         # Apply dark theme
+        from core.styles import StyleBuilder
+
         dialog.setStyleSheet(StyleBuilder.main_window())
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Add history widget
+        from .history_widget import HistoryWidget
+
         history_widget = HistoryWidget(self.history_manager, dialog)
         layout.addWidget(history_widget)
 
@@ -764,17 +845,50 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event):
-        """Handle application close event."""
-        # Clean up media rows
-        for row in self.media_rows:
-            row.cleanup()
+        """Handle window close event."""
+        try:
+            # Cleanup persistence service
+            if hasattr(self, 'media_persistence_service') and self.media_persistence_service:
+                self.media_persistence_service.shutdown()
+                print("✅ Persistence service shutdown completed")
 
-        # Clear the list
-        self.media_rows.clear()
+            # Cleanup settings manager
+            if hasattr(self, 'settings_manager') and self.settings_manager:
+                # Settings are auto-saved, just log
+                print("✅ Settings manager cleanup completed")
 
-        # Clean up upload manager if it exists
-        if self.upload_manager:
-            self.upload_manager.cleanup()
+            # Cleanup media rows
+            for row in self.media_rows:
+                row.cleanup()
+
+            print("✅ MainWindow cleanup completed")
+
+        except Exception as e:
+            print(f"⚠️ Warning: Error during cleanup: {e}")
 
         # Accept the close event
         event.accept()
+
+    def _show_persistence_stats(self):
+        """Show persistence statistics for monitoring."""
+        if not hasattr(self, 'media_persistence_service') or not self.media_persistence_service:
+            QMessageBox.information(self, "Persistence Stats", "Persistence service not available")
+            return
+
+        try:
+            stats = self.media_persistence_service.get_statistics()
+
+            message = f"""
+📊 Persistence Statistics:
+
+📁 Total Media Entries: {stats.get('total_entries', 0) }
+📝 Titles Saved: {stats.get('titles_saved', 0) }
+📄 Descriptions Saved: {stats.get('descriptions_saved', 0) }
+🖼️ Images Saved: {stats.get('images_saved', 0)}
+💾 File Size: {stats.get('file_size_mb', 0) :.2f} MB
+            """.strip()
+
+            QMessageBox.information(self, "Persistence Statistics", message)
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to get persistence statistics: {e}")

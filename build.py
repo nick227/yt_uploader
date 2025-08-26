@@ -12,7 +12,7 @@ from pathlib import Path
 def build_exe():
     """Build the Media Uploader executable."""
     print("🔨 Building Media Uploader executable...")
-    
+
     # PyInstaller command
     cmd = [
         "pyinstaller",
@@ -20,12 +20,12 @@ def build_exe():
         "--windowed",
         "--name=MediaUploader",
         "--icon=assets/icon.ico" if Path("assets/icon.ico").exists() else "",
-        "app/main.py"
+        "app/main.py",
     ]
-    
+
     # Remove empty icon argument if no icon exists
     cmd = [arg for arg in cmd if arg]
-    
+
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         print("✅ Build successful!")

@@ -28,8 +28,8 @@ class UploadSummaryWidget(QWidget):
     def _setup_ui(self):
         """Setup the user interface."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 2, 12, 2)
+        layout.setSpacing(4)
 
         # Summary frame with glass effect
         self.summary_frame = QFrame()
@@ -40,14 +40,14 @@ class UploadSummaryWidget(QWidget):
                 background: {theme.background_elevated};
                 border: 1px solid {theme.border};
                 border-radius: {theme.radius_m}px;
-                padding: 8px;
+                padding: 4px;
             }}
         """
         )
 
         frame_layout = QVBoxLayout(self.summary_frame)
-        frame_layout.setContentsMargins(12, 8, 12, 8)
-        frame_layout.setSpacing(6)
+        frame_layout.setContentsMargins(12, 4, 12, 4)
+        frame_layout.setSpacing(4)
 
         # Title
         self.title_label = QLabel("Upload Summary")
@@ -154,6 +154,7 @@ class UploadSummaryWidget(QWidget):
         self._failed_uploads = 0
 
         self.setVisible(True)
+        self.setFixedHeight(60)  # Set proper height when visible
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.results_layout.setVisible(False)
@@ -219,6 +220,7 @@ class UploadSummaryWidget(QWidget):
     def hide(self):
         """Hide the summary widget."""
         super().hide()
+        self.setFixedHeight(0)  # Reset height to zero
         self._total_uploads = 0
         self._completed_uploads = 0
         self._failed_uploads = 0
