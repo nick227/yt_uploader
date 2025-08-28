@@ -391,3 +391,9 @@ class UploadManager(QObject):
     def get_organization_stats(self) -> dict:
         """Get statistics about organized files."""
         return self._get_file_organizer().get_organization_stats()
+
+    def _get_file_organizer(self) -> FileOrganizer:
+        """Get or create the file organizer instance."""
+        if self.file_organizer is None:
+            self.file_organizer = FileOrganizer()
+        return self.file_organizer

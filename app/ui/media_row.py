@@ -14,10 +14,11 @@ from PySide6.QtWidgets import (
 from core.animations import fade_in, shake
 from core.history_manager import HistoryManager
 from core.models import MediaItem
-from core.styles import LayoutHelper, StyleBuilder
+from core.styles import LayoutHelper, StyleBuilder, theme
 from core.upload_manager import UploadManager
 
 from .media_converter import MediaConverter, ConversionError
+from .conversion_worker import ConversionWorker
 from .media_info_widget import MediaInfoWidget
 from .media_preview import MediaPreview
 from .media_row_updater import MediaRowUpdater
@@ -209,7 +210,7 @@ class MediaRow(QWidget):
                     self.media_info.render_status_indicator.setStyleSheet(
                         f"""
                         QLabel {{
-                            color: {StyleBuilder.theme.text_secondary};
+                            color: {theme.text_secondary};
                             font-size: 10px;
                             padding: 2px 6px;
                             border-radius: 4px;
@@ -268,6 +269,13 @@ class MediaRow(QWidget):
                 "Convert MP3 to MP4. Image is optional. If merge is checked, will combine with other selected MP3s."
             )
             controls.addWidget(self.convert_btn)
+            
+            # Cancel button (hidden by default)
+            self.cancel_btn = QPushButton("Cancel")
+            self._apply_button_style(self.cancel_btn, "danger")
+            self.cancel_btn.clicked.connect(self.on_cancel_conversion)
+            self.cancel_btn.setVisible(False)
+            controls.addWidget(self.cancel_btn)
 
             # Store image path for conversion
             self.image_path = None
@@ -485,17 +493,17 @@ class MediaRow(QWidget):
                 preview_widget.setStyleSheet(
                     f"""
                     QLabel#media_preview {{
-                        border: 3px solid {StyleBuilder.theme.primary};
+                        border: 3px solid {theme.primary};
                         border-radius: 8px;
                         background: transparent;
-                        color: {StyleBuilder.theme.text_secondary};
+                        color: {theme.text_secondary};
                         font-size: 12px;
                         font-weight: 500;
                         cursor: pointer;
                         padding: 8px;
                     }}
                     QLabel#media_preview:hover {{
-                        border-color: {StyleBuilder.theme.text_primary};
+                        border-color: {theme.text_primary};
                         background: rgba(255, 255, 255, 0.1);
                     }}
                 """
@@ -521,18 +529,18 @@ class MediaRow(QWidget):
                 preview_widget.setStyleSheet(
                     f"""
                     QLabel#media_preview {{
-                        border: 3px solid {StyleBuilder.theme.primary};
+                        border: 3px solid {theme.primary};
                         border-radius: 8px;
-                        background: {StyleBuilder.theme.background_elevated};
-                        color: {StyleBuilder.theme.text_secondary};
+                        background: {theme.background_elevated};
+                        color: {theme.text_secondary};
                         font-size: 12px;
                         font-weight: 500;
                         cursor: pointer;
                         padding: 8px;
                     }}
                     QLabel#media_preview:hover {{
-                        border-color: {StyleBuilder.theme.text_primary};
-                        background: {StyleBuilder.theme.background_secondary};
+                        border-color: {theme.text_primary};
+                        background: {theme.background_secondary};
                     }}
                 """
                 )
@@ -579,7 +587,7 @@ class MediaRow(QWidget):
             logger.warning(f"Failed to clear image thumbnail from persistence: {e}")
 
     def on_convert_clicked(self):
-        """Handle MP3 to MP4 conversion with optional merging."""
+        """Handle MP3 to MP4 conversion with optional merging using background thread."""
         # Check if image path exists and is valid (if one was selected)
         if self.image_path and not self.image_path.exists():
             QMessageBox.warning(
@@ -587,77 +595,132 @@ class MediaRow(QWidget):
             )
             return
 
+        # Check if merge is enabled and find other MP3s to merge
+        mp3_files_to_merge = self._get_mp3_files_to_merge()
+
+        # Get overlay selection
+        overlay_type = self._get_overlay_type()
+
+        if len(mp3_files_to_merge) == 0:
+            QMessageBox.warning(
+                self, "No Files Selected", "No MP3 files selected for conversion."
+            )
+            return
+
+        # Show conversion progress
+        self.convert_btn.setEnabled(False)
+        self.convert_btn.setVisible(False)
+        self.cancel_btn.setVisible(True)
+        self.upload_status.show_conversion_progress(0, "Starting conversion...")
+
+        # Create conversion worker and thread
+        self.conversion_worker = ConversionWorker()
+        self.conversion_thread = QThread()
+        
+        # Move worker to thread
+        self.conversion_worker.moveToThread(self.conversion_thread)
+        
+        # Connect signals
+        self.conversion_worker.progress_updated.connect(
+            self.upload_status.show_conversion_progress
+        )
+        self.conversion_worker.conversion_finished.connect(self._on_conversion_finished)
+        self.conversion_worker.conversion_failed.connect(self._on_conversion_failed)
+        
+        # Connect thread signals
+        self.conversion_thread.started.connect(self._start_conversion)
+        self.conversion_thread.finished.connect(self.conversion_thread.deleteLater)
+        self.conversion_worker.conversion_finished.connect(self.conversion_thread.quit)
+        self.conversion_worker.conversion_failed.connect(self.conversion_thread.quit)
+        
+        # Store conversion parameters
+        self._conversion_params = {
+            'mp3_files_to_merge': mp3_files_to_merge,
+            'overlay_type': overlay_type
+        }
+        
+        # Start the thread
+        self.conversion_thread.start()
+
+    def _start_conversion(self):
+        """Start the conversion in the background thread."""
+        mp3_files_to_merge = self._conversion_params['mp3_files_to_merge']
+        overlay_type = self._conversion_params['overlay_type']
+        
         try:
-            # Show conversion progress
-            self.convert_btn.setEnabled(False)
-            self.upload_status.show_conversion_progress(0, "Starting conversion...")
-
-            # Check if merge is enabled and find other MP3s to merge
-            mp3_files_to_merge = self._get_mp3_files_to_merge()
-
-            # Get overlay selection
-            overlay_type = self._get_overlay_type()
-
             if len(mp3_files_to_merge) > 1:
-                # Merge multiple MP3s (overlays not supported for merging yet)
-                self.upload_status.show_conversion_progress(
-                    10, f"Merging {len(mp3_files_to_merge)} MP3 files..."
-                )
-                # For merging, we need an image - use black background if none provided
+                # Merge multiple MP3s
                 if self.image_path:
-                    output_path = self.media_converter.merge_mp3s_to_mp4(
-                        mp3_files_to_merge, self.image_path
-                    )
+                    self.conversion_worker.merge_mp3s(mp3_files_to_merge, self.image_path)
                 else:
-                    # Create a temporary black background for merging
-                    output_path = self.media_converter.merge_mp3s_to_mp4_black(
-                        mp3_files_to_merge
-                    )
+                    self.conversion_worker.merge_mp3s(mp3_files_to_merge)
             elif len(mp3_files_to_merge) == 1:
-                # Single MP3 conversion with overlay
+                # Single MP3 conversion
                 if overlay_type == "waveform":
-                    output_path = self.media_converter.convert_mp3_to_mp4_with_overlay(
+                    self.conversion_worker.convert_single_mp3(
                         self.path, self.image_path, "waveform"
                     )
                 else:
-                    if self.image_path:
-                        output_path = self.media_converter.convert_mp3_to_mp4(
-                            self.path, self.image_path
-                        )
-                    else:
-                        output_path = (
-                            self.media_converter.convert_mp3_to_mp4_with_overlay(
-                                self.path, None, "none"
-                            )
-                        )
-            else:
-                # No files to merge (shouldn't happen, but handle gracefully)
-                raise ConversionError("No MP3 files selected for conversion")
-
-            if output_path and output_path.exists():
-                # Record conversion in history
-                self._record_conversion_in_history(output_path, mp3_files_to_merge)
-
-                # Update status indicators
-                self._update_status_indicators()
-
-                # Add the new MP4 row to the main window
-                self._add_mp4_row(output_path)
-            else:
-                raise ConversionError("Conversion failed - output file not created")
-
-        except ConversionError as e:
-            self.convert_btn.setEnabled(True)
-            self.upload_status.set_status("failed", f"Conversion failed: {e}")
-            QMessageBox.critical(
-                self, "Conversion Error", f"Failed to convert MP3: {e}"
-            )
+                    self.conversion_worker.convert_single_mp3(
+                        self.path, self.image_path, "none"
+                    )
         except Exception as e:
+            self.conversion_worker.conversion_failed.emit(f"Failed to start conversion: {e}")
+
+    def _on_conversion_finished(self, output_path: Path):
+        """Handle successful conversion completion."""
+        try:
+            mp3_files_to_merge = self._conversion_params['mp3_files_to_merge']
+            
+            # Record conversion in history
+            self._record_conversion_in_history(output_path, mp3_files_to_merge)
+
+            # Update status indicators
+            self._update_status_indicators()
+
+            # Add the new MP4 row to the main window
+            self._add_mp4_row(output_path)
+            
+            # Re-enable convert button
             self.convert_btn.setEnabled(True)
-            self.upload_status.set_status("failed", f"Unexpected error: {e}")
-            QMessageBox.critical(
-                self, "Conversion Error", f"Unexpected error during conversion: {e}"
-            )
+            self.convert_btn.setVisible(True)
+            self.cancel_btn.setVisible(False)
+            
+            logger.info(f"Conversion completed successfully: {output_path}")
+            
+        except Exception as e:
+            logger.error(f"Error handling conversion completion: {e}")
+            self._on_conversion_failed(f"Error handling conversion completion: {e}")
+
+    def _on_conversion_failed(self, error_message: str):
+        """Handle conversion failure."""
+        self.convert_btn.setEnabled(True)
+        self.convert_btn.setVisible(True)
+        self.cancel_btn.setVisible(False)
+        self.upload_status.set_status("failed", error_message)
+        QMessageBox.critical(
+            self, "Conversion Error", f"Failed to convert MP3: {error_message}"
+        )
+        logger.error(f"Conversion failed: {error_message}")
+
+    def on_cancel_conversion(self):
+        """Cancel the current conversion."""
+        if hasattr(self, 'conversion_worker') and hasattr(self, 'conversion_thread'):
+            # Cancel the worker
+            self.conversion_worker.cancel()
+            
+            # Quit the thread
+            if self.conversion_thread.isRunning():
+                self.conversion_thread.quit()
+                self.conversion_thread.wait(5000)  # Wait up to 5 seconds
+            
+            # Reset UI
+            self.convert_btn.setEnabled(True)
+            self.convert_btn.setVisible(True)
+            self.cancel_btn.setVisible(False)
+            self.upload_status.set_status("cancelled", "Conversion cancelled")
+            
+            logger.info("Conversion cancelled by user")
 
     def _get_overlay_type(self) -> str:
         """Get the selected overlay type from the combo box."""

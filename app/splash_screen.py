@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QSplashScreen, QVBoxLayout, QWidget
 
@@ -16,27 +16,36 @@ class LoadingThread(QThread):
     """Thread to simulate loading progress."""
 
     progress_updated = Signal(int)
+    loading_complete = Signal()
 
     def run(self):
-        """Simulate loading progress."""
+        """Simulate loading progress with extended duration."""
         # Start at 0
         self.progress_updated.emit(0)
-        time.sleep(0.1)
+        time.sleep(0.2)
 
-        # Quick initial load
-        for i in range(1, 30):
+        # Initial load phase (0-20%)
+        for i in range(1, 21):
             self.progress_updated.emit(i)
-            time.sleep(0.02)
+            time.sleep(0.05)
 
-        # Faster middle section
-        for i in range(30, 80):
+        # Main loading phase (20-70%)
+        for i in range(21, 71):
+            self.progress_updated.emit(i)
+            time.sleep(0.04)
+
+        # UI preparation phase (70-90%)
+        for i in range(71, 91):
+            self.progress_updated.emit(i)
+            time.sleep(0.06)
+
+        # Final preparation phase (90-100%)
+        for i in range(91, 101):
             self.progress_updated.emit(i)
             time.sleep(0.03)
 
-        # Final stretch
-        for i in range(80, 101):
-            self.progress_updated.emit(i)
-            time.sleep(0.01)
+        # Signal completion
+        self.loading_complete.emit()
 
 
 class SplashScreen(QSplashScreen):
@@ -54,6 +63,10 @@ class SplashScreen(QSplashScreen):
         # Create loading thread
         self.loading_thread = LoadingThread()
         self.loading_thread.progress_updated.connect(self.update_progress)
+        self.loading_thread.loading_complete.connect(self.on_loading_complete)
+        
+        # Add signal for external completion notification
+        self.loading_complete = self.loading_thread.loading_complete
 
         # Start loading animation
         self.loading_thread.start()
@@ -178,6 +191,15 @@ class SplashScreen(QSplashScreen):
         # Update the splash screen
         self.setPixmap(pixmap)
         QApplication.processEvents()
+
+    def on_loading_complete(self):
+        """Called when loading is complete."""
+        # Add a small delay to ensure UI is fully prepared
+        QTimer.singleShot(200, self._emit_complete)
+
+    def _emit_complete(self):
+        """Emit completion signal."""
+        self.loading_complete.emit()
 
     def finish(self, widget):
         """Finish the splash screen and show the main widget."""

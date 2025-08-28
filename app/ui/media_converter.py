@@ -1,5 +1,6 @@
 # app/ui/media_converter.py
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -114,7 +115,7 @@ class MediaConverter:
             # Update progress - starting waveform conversion
             self._update_progress(30, "Generating waveform visualization...")
 
-            result = subprocess.run(waveform_cmd, capture_output=True, text=True)
+            result = subprocess.run(waveform_cmd, capture_output=True, text=True, timeout=300)
             if result.returncode != 0:
                 raise ConversionError(
                     f"FFmpeg waveform conversion failed: {result.stderr}"
@@ -136,6 +137,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to convert MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
@@ -186,7 +189,7 @@ class MediaConverter:
             # Update progress - starting waveform conversion
             self._update_progress(30, "Generating waveform visualization...")
 
-            result = subprocess.run(waveform_cmd, capture_output=True, text=True)
+            result = subprocess.run(waveform_cmd, capture_output=True, text=True, timeout=300)
             if result.returncode != 0:
                 raise ConversionError(
                     f"FFmpeg waveform conversion failed: {result.stderr}"
@@ -208,6 +211,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to convert MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
@@ -251,7 +256,7 @@ class MediaConverter:
             # Update progress - starting conversion
             self._update_progress(30, "Converting audio to video...")
 
-            result = subprocess.run(audio_cmd, capture_output=True, text=True)
+            result = subprocess.run(audio_cmd, capture_output=True, text=True, timeout=300)
             if result.returncode != 0:
                 raise ConversionError(
                     f"FFmpeg audio-only conversion failed: {result.stderr}"
@@ -273,6 +278,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to convert MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
@@ -333,7 +340,7 @@ class MediaConverter:
             # Update progress - generating rain effect
             self._update_progress(30, "Generating rain effect...")
 
-            result = subprocess.run(rain_cmd, capture_output=True, text=True)
+            result = subprocess.run(rain_cmd, capture_output=True, text=True, timeout=300)
             if result.returncode != 0:
                 raise ConversionError(
                     f"FFmpeg rain effect conversion failed: {result.stderr}"
@@ -355,6 +362,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to convert MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
@@ -414,7 +423,7 @@ class MediaConverter:
             # Update progress - generating combined effects
             self._update_progress(30, "Generating waveform and rain effects...")
 
-            result = subprocess.run(combined_cmd, capture_output=True, text=True)
+            result = subprocess.run(combined_cmd, capture_output=True, text=True, timeout=300)
             if result.returncode != 0:
                 raise ConversionError(
                     f"FFmpeg combined effects conversion failed: {result.stderr}"
@@ -436,6 +445,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to convert MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
@@ -446,16 +457,25 @@ class MediaConverter:
     def convert_mp3_to_mp4(self, mp3_path: Path, image_path: Path) -> Path:
         """Convert MP3 + image to MP4 using ffmpeg."""
         try:
+            print(f"[CONVERT] Starting conversion: {mp3_path} + {image_path}")
+            
             # Verify input files exist
+            print(f"[CONVERT] Checking input files...")
             if not mp3_path.exists():
+                print(f"[CONVERT] ERROR: MP3 file not found: {mp3_path}")
                 raise ConversionError(f"MP3 file not found: {mp3_path}")
             if not image_path.exists():
+                print(f"[CONVERT] ERROR: Image file not found: {image_path}")
                 raise ConversionError(f"Image file not found: {image_path}")
+            
+            print(f"[CONVERT] Input files verified successfully")
 
             # Create output path (same name as MP3 but .mp4 extension)
             output_path = mp3_path.with_suffix(".mp4")
+            print(f"[CONVERT] Output path: {output_path}")
 
             # Update progress - getting duration
+            print(f"[CONVERT] Step 1: Getting audio duration...")
             self._update_progress(10, "Getting audio duration...")
 
             # Get MP3 duration
@@ -469,66 +489,114 @@ class MediaConverter:
                 "csv=p=0",
                 str(mp3_path),
             ]
+            
+            print(f"[CONVERT] Running ffprobe command: {' '.join(duration_cmd)}")
 
-            result = subprocess.run(duration_cmd, capture_output=True, text=True)
+            result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=30)
+            print(f"[CONVERT] ffprobe return code: {result.returncode}")
+            print(f"[CONVERT] ffprobe stdout: {result.stdout.strip()}")
+            print(f"[CONVERT] ffprobe stderr: {result.stderr.strip()}")
+            
             if result.returncode != 0:
+                print(f"[CONVERT] ERROR: Failed to get MP3 duration")
                 raise ConversionError(f"Failed to get MP3 duration: {result.stderr}")
 
             duration = float(result.stdout.strip())
+            print(f"[CONVERT] Audio duration: {duration} seconds")
+            
+            if duration <= 0:
+                print(f"[CONVERT] ERROR: Invalid audio duration: {duration}")
+                raise ConversionError("Invalid audio duration")
 
             # Update progress - starting conversion
+            print(f"[CONVERT] Step 2: Starting video conversion...")
             self._update_progress(20, "Starting video conversion...")
 
-            # Convert MP3 + image to MP4
-            convert_cmd = [
-                "ffmpeg",
-                "-y",  # Overwrite output file
-                "-loop",
-                "1",  # Loop the image
-                "-i",
-                str(image_path),  # Input image
-                "-i",
-                str(mp3_path),  # Input audio
-                "-c:v",
-                "libx264",  # Video codec
-                "-c:a",
-                "aac",  # Audio codec
-                "-shortest",  # End when shortest input ends
-                "-pix_fmt",
-                "yuv420p",  # Pixel format for compatibility
-                str(output_path),  # Output file
-            ]
-
             # Update progress - conversion in progress
+            print(f"[CONVERT] Step 3: Converting audio to video...")
             self._update_progress(50, "Converting audio to video...")
 
-            result = subprocess.run(convert_cmd, capture_output=True, text=True)
+            print(f"[CONVERT] Starting ffmpeg subprocess...")
+            
+            # Use the correct ffmpeg command with -loop 1 for proper duration
+            convert_cmd = [
+                "ffmpeg",
+                "-y",
+                "-loop", "1",  # Loop the image for full audio duration
+                "-i", str(image_path),
+                "-i", str(mp3_path),
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-shortest",  # End when shortest input ends (audio duration)
+                "-pix_fmt", "yuv420p",  # Ensure compatibility
+                str(output_path),
+            ]
+            
+            print(f"[CONVERT] Running ffmpeg command: {' '.join(convert_cmd)}")
+            
+            try:
+                # Add a shorter timeout for testing (2 minutes instead of 5)
+                result = subprocess.run(convert_cmd, capture_output=True, text=True, timeout=120)
+                print(f"[CONVERT] FFmpeg completed with return code: {result.returncode}")
+                print(f"[CONVERT] FFmpeg stdout length: {len(result.stdout)}")
+                print(f"[CONVERT] FFmpeg stderr length: {len(result.stderr)}")
+                
+                if result.stderr:
+                    print(f"[CONVERT] FFmpeg stderr output: {result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                print(f"[CONVERT] ERROR: FFmpeg process timed out after 2 minutes")
+                raise ConversionError("FFmpeg process timed out after 2 minutes")
+            
             if result.returncode != 0:
+                print(f"[CONVERT] ERROR: FFmpeg conversion failed")
+                print(f"[CONVERT] FFmpeg stderr: {result.stderr}")
                 raise ConversionError(f"FFmpeg conversion failed: {result.stderr}")
 
             # Update progress - finalizing
+            print(f"[CONVERT] Step 4: Finalizing video...")
             self._update_progress(90, "Finalizing video...")
 
             # Verify the output file was created
+            print(f"[CONVERT] Checking if output file exists: {output_path}")
             if not output_path.exists():
+                print(f"[CONVERT] ERROR: Output file was not created")
                 raise ConversionError(f"Output file was not created: {output_path}")
 
+            # Check file size to ensure it's not empty
+            file_size = output_path.stat().st_size
+            print(f"[CONVERT] Output file size: {file_size} bytes")
+            
+            if file_size == 0:
+                print(f"[CONVERT] ERROR: Output file is empty")
+                raise ConversionError("Output file is empty - conversion may have failed")
+
             # Update progress - complete
+            print(f"[CONVERT] Step 5: Conversion complete!")
             self._update_progress(100, "Conversion complete!")
 
+            print(f"[CONVERT] SUCCESS: Conversion completed successfully")
             return output_path
 
-        except FileNotFoundError:
+        except FileNotFoundError as e:
+            print(f"[CONVERT] ERROR: FFmpeg not found: {e}")
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to convert MP3s."
             )
+        except subprocess.TimeoutExpired as e:
+            print(f"[CONVERT] ERROR: Process timed out: {e}")
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
+            print(f"[CONVERT] ERROR: FFmpeg process error: {e}")
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
+            print(f"[CONVERT] ERROR: File system error: {e}")
             raise ConversionError(f"File system error: {e}")
         except ValueError as e:
+            print(f"[CONVERT] ERROR: Invalid duration value: {e}")
             raise ConversionError(f"Invalid duration value: {e}")
         except Exception as e:
+            print(f"[CONVERT] ERROR: Unexpected conversion error: {e}")
             raise ConversionError(f"Unexpected conversion error: {e}")
 
     def merge_mp3s_to_mp4(self, mp3_paths: list[Path], image_path: Path) -> Path:
@@ -544,7 +612,7 @@ class MediaConverter:
             # Create output path (use name of first MP3 but with _merged suffix)
             first_mp3 = mp3_paths[0]
             output_path = first_mp3.with_suffix("").with_name(
-                f"{first_mp3.stem}_merged{".mp4"}"
+                f"{first_mp3.stem}_merged.mp4"
             )
 
             # Update progress - preparing merge
@@ -585,7 +653,7 @@ class MediaConverter:
                     str(merged_audio_path),
                 ]
 
-                result = subprocess.run(merge_audio_cmd, capture_output=True, text=True)
+                result = subprocess.run(merge_audio_cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode != 0:
                     raise ConversionError(
                         f"Failed to merge audio files: {result.stderr}"
@@ -614,7 +682,7 @@ class MediaConverter:
                     str(output_path),  # Output file
                 ]
 
-                result = subprocess.run(convert_cmd, capture_output=True, text=True)
+                result = subprocess.run(convert_cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode != 0:
                     raise ConversionError(f"FFmpeg conversion failed: {result.stderr}")
 
@@ -643,6 +711,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to merge MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:
@@ -661,7 +731,7 @@ class MediaConverter:
             # Create output path (use name of first MP3 but with _merged suffix)
             first_mp3 = mp3_paths[0]
             output_path = first_mp3.with_suffix("").with_name(
-                f"{first_mp3.stem}_merged{".mp4"}"
+                f"{first_mp3.stem}_merged.mp4"
             )
 
             # Update progress - preparing merge
@@ -703,7 +773,7 @@ class MediaConverter:
                     str(merged_audio_path),
                 ]
 
-                result = subprocess.run(merge_audio_cmd, capture_output=True, text=True)
+                result = subprocess.run(merge_audio_cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode != 0:
                     raise ConversionError(
                         f"Failed to merge audio files: {result.stderr}"
@@ -734,7 +804,7 @@ class MediaConverter:
                     str(output_path),  # Output file
                 ]
 
-                result = subprocess.run(convert_cmd, capture_output=True, text=True)
+                result = subprocess.run(convert_cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode != 0:
                     raise ConversionError(f"FFmpeg conversion failed: {result.stderr}")
 
@@ -763,6 +833,8 @@ class MediaConverter:
             raise ConversionError(
                 "FFmpeg not found. Please install FFmpeg to merge MP3s."
             )
+        except subprocess.TimeoutExpired:
+            raise ConversionError("FFmpeg process timed out")
         except subprocess.CalledProcessError as e:
             raise ConversionError(f"FFmpeg process error: {e}")
         except OSError as e:

@@ -40,15 +40,24 @@ def main():
     # Create main window (this will take some time to load)
     w = MainWindow()
 
-    # Finish splash screen and show main window
-    splash.finish(w)
-    w.show()
+    # Use a timer to show main window after splash screen completes
+    # This avoids the complex signal coordination that was causing issues
+    QTimer.singleShot(6000, lambda: _show_main_window(splash, w))
 
     try:
         sys.exit(app.exec())
     except KeyboardInterrupt:
         w.close()
         sys.exit(0)
+
+
+def _show_main_window(splash, main_window):
+    """Show main window after splash screen completes."""
+    # Finish splash screen
+    splash.finish(main_window)
+    
+    # Show main window (it will fade in automatically)
+    main_window.show()
 
 
 if __name__ == "__main__":

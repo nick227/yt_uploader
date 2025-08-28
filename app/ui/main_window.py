@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, QPropertyAnimation, QEasingCurve, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -29,11 +29,152 @@ from .upload_summary import UploadSummaryWidget
 from core.upload_manager import UploadManager
 
 
+class LazyLoadingThread(QThread):
+    """Thread for lazy loading media items to prevent UI blocking."""
+    
+    progress_updated = Signal(int, int)  # current, total
+    items_loaded = Signal(list)  # list of MediaItem paths
+    loading_complete = Signal()
+    
+    def __init__(self, folder_path: Path, batch_size: int = 50):
+        super().__init__()
+        self.folder_path = folder_path
+        self.batch_size = batch_size
+        self._is_cancelled = False
+        
+    def cancel(self):
+        """Cancel the loading operation."""
+        self._is_cancelled = True
+        
+    def run(self):
+        """Scan folder and emit media items in batches."""
+        try:
+            media_extensions = {".mp3", ".mp4", ".wav", ".flac", ".m4a", ".avi", ".mov", ".mkv"}
+            
+            # First pass: count total files
+            total_files = 0
+            for file_path in self.folder_path.rglob("*"):
+                if self._is_cancelled:
+                    return
+                if file_path.is_file() and file_path.suffix.lower() in media_extensions:
+                    total_files += 1
+            
+            if total_files == 0:
+                self.loading_complete.emit()
+                return
+            
+            # Second pass: emit items in batches
+            current_batch = []
+            processed_files = 0
+            
+            for file_path in self.folder_path.rglob("*"):
+                if self._is_cancelled:
+                    return
+                    
+                if not file_path.is_file() or file_path.suffix.lower() not in media_extensions:
+                    continue
+                
+                try:
+                    # Create lightweight MediaItem (no heavy operations)
+                    media_item = MediaItem(
+                        path=file_path,
+                        title=file_path.stem,
+                    )
+                    current_batch.append(media_item)
+                    processed_files += 1
+                    
+                    # Emit batch when full
+                    if len(current_batch) >= self.batch_size:
+                        self.items_loaded.emit(current_batch)
+                        self.progress_updated.emit(processed_files, total_files)
+                        current_batch = []
+                        
+                except (OSError, PermissionError):
+                    continue
+            
+            # Emit final batch
+            if current_batch:
+                self.items_loaded.emit(current_batch)
+                self.progress_updated.emit(processed_files, total_files)
+            
+            self.loading_complete.emit()
+            
+        except Exception as e:
+            print(f"Error in lazy loading thread: {e}")
+            self.loading_complete.emit()
+
+
+class VirtualScrollArea(QScrollArea):
+    """Virtual scrolling area that only creates widgets for visible items."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.all_items = []  # All MediaItem objects
+        self.visible_widgets = {}  # Dict of visible widgets: index -> MediaRow
+        self.widget_height = 120  # Estimated height of each MediaRow
+        self.buffer_size = 5  # Number of widgets to keep above/below visible area
+        
+    def set_items(self, items):
+        """Set all items and clear visible widgets."""
+        self.all_items = items
+        self.visible_widgets.clear()
+        self._update_visible_widgets()
+        
+    def _update_visible_widgets(self):
+        """Update which widgets are visible based on scroll position."""
+        if not self.all_items:
+            return
+            
+        # Get current scroll position
+        scroll_pos = self.verticalScrollBar().value()
+        viewport_height = self.viewport().height()
+        
+        # Calculate visible range
+        start_index = max(0, scroll_pos // self.widget_height - self.buffer_size)
+        end_index = min(len(self.all_items), (scroll_pos + viewport_height) // self.widget_height + self.buffer_size)
+        
+        # Remove widgets that are no longer visible
+        widgets_to_remove = []
+        for index, widget in self.visible_widgets.items():
+            if index < start_index or index >= end_index:
+                widgets_to_remove.append(index)
+                
+        for index in widgets_to_remove:
+            widget = self.visible_widgets.pop(index)
+            widget.setParent(None)
+            widget.deleteLater()
+        
+        # Add widgets that are now visible
+        for index in range(start_index, end_index):
+            if index not in self.visible_widgets:
+                item = self.all_items[index]
+                widget = self._create_widget_for_item(item, index)
+                self.visible_widgets[index] = widget
+                
+    def _create_widget_for_item(self, item, index):
+        """Create a widget for a specific item."""
+        # This will be implemented by the parent class
+        pass
+        
+    def resizeEvent(self, event):
+        """Handle resize events to update visible widgets."""
+        super().resizeEvent(event)
+        self._update_visible_widgets()
+        
+    def scrollContentsBy(self, dx, dy):
+        """Handle scroll events to update visible widgets."""
+        super().scrollContentsBy(dx, dy)
+        self._update_visible_widgets()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumSize(*WINDOW_MIN_SIZE)
+
+        # Set initial opacity to 0 for fade-in effect
+        self.setWindowOpacity(0.0)
 
         # Lazy load heavy modules
         from core.styles import StyleBuilder
@@ -50,6 +191,17 @@ class MainWindow(QMainWindow):
 
         LayoutHelper.set_standard_spacing(layout)
         layout.setSpacing(4)  # Reduce spacing between sections
+        
+        # Create loading overlay to prevent jitter visibility
+        self.loading_overlay = QWidget(central)
+        self.loading_overlay.setStyleSheet("""
+            QWidget {
+                background-color: rgba(35, 35, 35, 0.95);
+                border: none;
+            }
+        """)
+        self.loading_overlay.setVisible(True)
+        self.loading_overlay.raise_()
 
         # Initialize managers (defer auth setup to avoid blocking)
         self.auth_widget = None  # Will be initialized after window shows
@@ -86,6 +238,12 @@ class MainWindow(QMainWindow):
         # Initialize sorting state
         self.current_sort_field = "name"
         self.current_sort_reverse = False
+
+        # Lazy loading state
+        self.all_media_items = []  # All MediaItem objects (lightweight)
+        self.media_rows = []  # Only visible MediaRow widgets
+        self.lazy_loading_thread = None
+        self.is_loading = False
 
         # Top toolbar with fixed height
         toolbar_container = QWidget()
@@ -191,6 +349,9 @@ class MainWindow(QMainWindow):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet(StyleBuilder.scroll_area())
+        
+        # Connect scroll events for lazy loading
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
         self.media_container = QWidget()
         self.media_layout = QVBoxLayout(self.media_container)
@@ -220,6 +381,33 @@ class MainWindow(QMainWindow):
 
         # Trigger initial folder scan after window is shown
         QTimer.singleShot(100, self._scan_current_folder)
+        
+        # Start fade-in animation after a short delay
+        QTimer.singleShot(50, self._start_fade_in_animation)
+
+    def _start_fade_in_animation(self):
+        """Start the fade-in animation for smooth appearance."""
+        # Hide loading overlay first
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.setVisible(False)
+        
+        # Create fade-in animation
+        self.fade_animation = QPropertyAnimation(self, b"windowOpacity")
+        self.fade_animation.setDuration(800)  # 800ms fade-in
+        self.fade_animation.setStartValue(0.0)
+        self.fade_animation.setEndValue(1.0)
+        self.fade_animation.setEasingCurve(QEasingCurve.OutCubic)
+        
+        # Start the animation
+        self.fade_animation.start()
+
+    def resizeEvent(self, event):
+        """Handle window resize to ensure loading overlay covers entire window."""
+        super().resizeEvent(event)
+        
+        # Update loading overlay size to match window
+        if hasattr(self, 'loading_overlay'):
+            self.loading_overlay.setGeometry(0, 0, self.width(), self.height())
 
     def _initialize_auth(self):
         """Initialize authentication components after window is shown."""
@@ -252,10 +440,18 @@ class MainWindow(QMainWindow):
 
     def _update_media_visibility(self):
         """Update visibility of media rows based on folder filters."""
-        for row in self.media_rows:
-            row_parent = str(row.path.parent)
-            is_visible = row_parent not in self.hidden_folders
-            row.setVisible(is_visible)
+        # Filter the all_media_items list first
+        visible_items = []
+        for item in self.all_media_items:
+            item_parent = str(item.path.parent)
+            if item_parent not in self.hidden_folders:
+                visible_items.append(item)
+        
+        # Update the all_media_items list with filtered items
+        self.all_media_items = visible_items
+        
+        # Recreate visible widgets
+        self._recreate_visible_widgets()
 
     def _connect_upload_manager_signals(self):
         """Connect upload manager signals to UI handlers."""
@@ -271,7 +467,7 @@ class MainWindow(QMainWindow):
         self.upload_manager = UploadManager(self.auth_widget.auth_manager)
         self._connect_upload_manager_signals()
 
-        # Update all media rows with new upload manager
+        # Update all visible media rows with new upload manager
         for row in self.media_rows:
             row.set_upload_manager(self.upload_manager)
 
@@ -289,7 +485,11 @@ class MainWindow(QMainWindow):
             if self.upload_manager
             else False
         )
-        has_selected = any(row.is_selected() for row in self.media_rows)
+        # Check selection across all items, not just visible widgets
+        has_selected = any(
+            hasattr(item, 'is_selected') and item.is_selected() 
+            for item in self.all_media_items
+        ) or any(row.is_selected() for row in self.media_rows)
 
         self.batch_upload_btn.setEnabled(is_ready and has_selected)
 
@@ -315,7 +515,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"Warning: Failed to save last media path: {e}")
             self._update_folder_button_text()
-            self._scan_folder(self.current_folder)
+            self._start_lazy_loading(self.current_folder)
 
     def _update_folder_button_text(self):
         """Update the folder button text with truncated path."""
@@ -337,129 +537,163 @@ class MainWindow(QMainWindow):
         self.folder_btn.setText(f"📁 {path_str}")
 
     def _scan_current_folder(self):
-        self._scan_folder(self.current_folder)
+        """Start lazy loading of the current folder."""
+        self._start_lazy_loading(self.current_folder)
 
     def _reload_current_folder(self):
         """Reload and rescan the current folder."""
-        # The _scan_folder method now handles all status updates
-        self._scan_folder(self.current_folder)
+        self._start_lazy_loading(self.current_folder)
 
-    def _scan_folder(self, folder_path: Path):
-        """Scan a folder for media files and create media rows."""
+    def _start_lazy_loading(self, folder_path: Path):
+        """Start lazy loading of media items from a folder."""
+        if self.is_loading:
+            # Cancel previous loading operation
+            if self.lazy_loading_thread:
+                self.lazy_loading_thread.cancel()
+                self.lazy_loading_thread.wait()
+        
         try:
-            # Show scanning indicator
-            self.status_label.setText("🔍 Scanning folder...")
-            QApplication.processEvents()  # Update UI immediately
-
-            # Clear existing media rows
+            # Clear existing items and widgets
+            self.all_media_items.clear()
             for row in self.media_rows:
                 row.cleanup()
                 row.deleteLater()
             self.media_rows.clear()
-
-            # Find media files with progress updates
-            media_items = self._find_media_with_progress(folder_path)
-
-            # Show processing indicator
-            self.status_label.setText(f"📁 Processing {len(media_items)} files...")
+            
+            # Clear the media layout
+            while self.media_layout.count() > 1:  # Keep the stretch item
+                child = self.media_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            
+            # Show scanning indicator
+            self.status_label.setText("🔍 Scanning folder...")
             QApplication.processEvents()
+            
+            # Start lazy loading thread
+            self.is_loading = True
+            self.lazy_loading_thread = LazyLoadingThread(folder_path, batch_size=20)
+            self.lazy_loading_thread.progress_updated.connect(self._on_loading_progress)
+            self.lazy_loading_thread.items_loaded.connect(self._on_items_loaded)
+            self.lazy_loading_thread.loading_complete.connect(self._on_loading_complete)
+            self.lazy_loading_thread.start()
+            
+        except Exception as e:
+            self.status_label.setText(f"❌ Error starting scan: {e}")
+            self.is_loading = False
 
-            # Create media rows in batches for better responsiveness
-            from .media_row import MediaRow
+    def _on_loading_progress(self, current: int, total: int):
+        """Handle loading progress updates."""
+        if total > 0:
+            progress = min(100, int(current / total * 100))
+            self.status_label.setText(f"🔍 Scanning... {progress}% ({current}/{total} files)")
+        else:
+            self.status_label.setText("🔍 Scanning folder...")
+        QApplication.processEvents()
 
-            batch_size = 5
-            for i in range(0, len(media_items), batch_size):
-                batch = media_items[i: i + batch_size]
+    def _on_items_loaded(self, items: list):
+        """Handle new items loaded from the background thread."""
+        try:
+            # Add items to our collection
+            self.all_media_items.extend(items)
+            
+            # Create widgets only for the first batch (visible items)
+            if len(self.media_rows) == 0:
+                self._create_initial_widgets()
+            
+            # Update status
+            self.status_label.setText(f"📁 Found {len(self.all_media_items)} media files")
+            
+        except Exception as e:
+            print(f"Error processing loaded items: {e}")
 
-                for item in batch:
-                    row = MediaRow(item, self)
-                    self.media_rows.append(row)
-                    self.media_layout.addWidget(row)
-
-                # Update progress every batch
-                if len(media_items) > batch_size:
-                    progress = min(100, int((i + batch_size) / len(media_items) * 100))
-                    self.status_label.setText(f"📁 Processing files... {progress}%")
-                    QApplication.processEvents()
-
-            # Update folder chip bar with current media paths
-            media_paths = [row.path for row in self.media_rows]
+    def _on_loading_complete(self):
+        """Handle completion of lazy loading."""
+        try:
+            self.is_loading = False
+            
+            # Apply sorting to all items
+            self._apply_sorting_to_items()
+            
+            # Update folder chip bar
+            media_paths = [item.path for item in self.all_media_items]
             self.folder_chip_bar.update_folders(media_paths)
-
-            # Apply current sorting
-            self._apply_sorting()
-
+            
             # Apply folder filtering
             self._update_media_visibility()
-
+            
             # Update final status
-            if self.media_rows:
-                self.status_label.setText(
-                    f"✅ Found {len(self.media_rows)} media files"
-                )
+            if self.all_media_items:
+                self.status_label.setText(f"✅ Loaded {len(self.all_media_items)} media files")
             else:
                 self.status_label.setText("✅ No media files found")
-
+                
         except Exception as e:
-            self.status_label.setText(f"❌ Error scanning folder: {e}")
+            self.status_label.setText(f"❌ Error completing scan: {e}")
 
-    def _find_media_with_progress(self, folder_path: Path):
-        """Find media files with progress updates (recursive but efficient)."""
-        media_items = []
+    def _create_initial_widgets(self):
+        """Create widgets for the first visible items."""
+        try:
+            # Create widgets for first 10 items (or all if less than 10)
+            initial_count = min(10, len(self.all_media_items))
+            
+            for i in range(initial_count):
+                item = self.all_media_items[i]
+                row = self._create_media_row(item)
+                self.media_rows.append(row)
+                self.media_layout.insertWidget(i, row)  # Insert before stretch
+                
+        except Exception as e:
+            print(f"Error creating initial widgets: {e}")
 
-        if not folder_path.exists() or not folder_path.is_dir():
-            return media_items
+    def _create_media_row(self, item: MediaItem):
+        """Create a MediaRow widget for a MediaItem."""
+        from .media_row import MediaRow
+        return MediaRow(item, self)
 
-        # Supported media extensions
-        media_extensions = {
-            ".mp3",
-            ".mp4",
-            ".wav",
-            ".flac",
-            ".m4a",
-            ".avi",
-            ".mov",
-            ".mkv",
-        }
+    def _apply_sorting_to_items(self):
+        """Apply sorting to the all_media_items list."""
+        try:
+            if self.current_sort_field == "name":
+                self.all_media_items.sort(key=lambda x: x.filename.lower(), reverse=self.current_sort_reverse)
+            elif self.current_sort_field == "size":
+                self.all_media_items.sort(key=lambda x: x.size_mb, reverse=self.current_sort_reverse)
+            elif self.current_sort_field == "duration":
+                self.all_media_items.sort(key=lambda x: x.duration_ms or 0, reverse=self.current_sort_reverse)
+            elif self.current_sort_field == "date":
+                self.all_media_items.sort(key=lambda x: x.path.stat().st_mtime, reverse=self.current_sort_reverse)
+                
+        except Exception as e:
+            print(f"Error applying sorting: {e}")
 
-        # Count total files first for progress (only media files)
-        total_files = 0
-        for file_path in folder_path.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in media_extensions:
-                total_files += 1
+    def _on_scroll(self, value):
+        """Handle scroll events to trigger lazy loading."""
+        if not self.all_media_items or self.is_loading:
+            return
+            
+        # Check if we're near the bottom (within 2 items)
+        scrollbar = self.scroll_area.verticalScrollBar()
+        max_value = scrollbar.maximum()
+        threshold = max_value - (2 * 120)  # 2 items worth of scrolling
+        
+        if value >= threshold:
+            self._load_more_widgets()
 
-        processed_files = 0
-
-        # Scan recursively but only process media files
-        for file_path in folder_path.rglob("*"):
-            # Skip non-files and non-media files early
-            if not file_path.is_file():
-                continue
-
-            if file_path.suffix.lower() not in media_extensions:
-                continue
-
-            processed_files += 1
-
-            # Update progress less frequently for better performance
-            if processed_files % 20 == 0 or processed_files == total_files:
-                progress = min(100, int(processed_files / total_files * 100))
-                self.status_label.setText(
-                    f"Scanning... {progress}% ({processed_files}/{total_files} media files)"
-                )
-                QApplication.processEvents()
-
-            try:
-                # Create MediaItem with only the parameters it accepts
-                media_item = MediaItem(
-                    path=file_path,
-                    title=file_path.stem,  # Use filename without extension as title
-                )
-                media_items.append(media_item)
-            except (OSError, PermissionError) as e:
-                continue
-
-        return media_items
+    def _load_more_widgets(self):
+        """Load more widgets when user scrolls near the bottom."""
+        if self.is_loading or len(self.media_rows) >= len(self.all_media_items):
+            return
+            
+        # Load next batch of widgets
+        current_count = len(self.media_rows)
+        batch_size = 5
+        end_index = min(current_count + batch_size, len(self.all_media_items))
+        
+        for i in range(current_count, end_index):
+            item = self.all_media_items[i]
+            row = self._create_media_row(item)
+            self.media_rows.append(row)
+            self.media_layout.insertWidget(i, row)  # Insert before stretch
 
     def _update_batch_button(self):
         selected_count = sum(1 for row in self.media_rows if row.is_selected())
@@ -652,19 +886,32 @@ class MainWindow(QMainWindow):
         self._apply_sorting()
 
     def _apply_sorting(self):
-        """Apply sorting to media rows."""
-        if not self.media_rows:
-            return
+        """Apply sorting to media rows (for backward compatibility)."""
+        # This method now delegates to the new lazy loading system
+        if self.all_media_items:
+            self._apply_sorting_to_items()
+            self._recreate_visible_widgets()
 
-        # Sort the media rows based on current settings
-        self.media_rows.sort(key=self._get_sort_key, reverse=self.current_sort_reverse)
-
-        # Reorder widgets in the layout
-        for i, row in enumerate(self.media_rows):
-            # Remove from current position
-            self.media_layout.removeWidget(row)
-            # Insert at new position (before the stretch)
-            self.media_layout.insertWidget(i, row)
+    def _recreate_visible_widgets(self):
+        """Recreate visible widgets after sorting."""
+        try:
+            # Clear existing widgets
+            for row in self.media_rows:
+                row.cleanup()
+                row.deleteLater()
+            self.media_rows.clear()
+            
+            # Clear the media layout
+            while self.media_layout.count() > 1:  # Keep the stretch item
+                child = self.media_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            
+            # Recreate initial widgets
+            self._create_initial_widgets()
+            
+        except Exception as e:
+            print(f"Error recreating widgets: {e}")
 
     def _get_sort_key(self, row):
         """Get sort key for a media row."""
